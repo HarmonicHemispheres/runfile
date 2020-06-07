@@ -1,16 +1,22 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenType {
     Ident,
+    EqualSign,
     Command,
     Script,
     Variable,
     OpenScope,
     CloseScope,
+    OpenMLineScope,
+    CloseMLineScope,
     OpenAttr,
     CloseAttr,
     StringValue,
+    NewLine,
     Colon,
+    Comma,
     Value,
+    VarRef,
     EOF
 }
 

@@ -32,7 +32,7 @@ impl Logger {
         }
     }
 
-    fn write_to_path(&self, content: String) {}
+    // fn write_to_path(&self, content: String) {}
 
     pub fn log(&self, content: String, lvl: Level) {
 

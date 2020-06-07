@@ -1,45 +1,27 @@
 # this whole line is a comment
 # comment here?
-# !var time = 12/23/2023
+
+!var show = echo hello world
+
+# !var ps = {{
+# echo "hi there
+# long string"
+# }}
+
+# supports multi line varaibles
+!var pcmd = {{
+echo c1 &&
+echo c2
+}}
+
+# supports platform specific scripts
+[linux]>> ${pcmd}
+[mac]>> ${pcmd}
+[win]>> powershell ping localhost
 
 
->> 6*5 \
-      +5+4
-# >> 1 + 1
-# >> powershell echo "do a thing"
-# >> powershell python -c "print('hello')"
-
-!cmd abc {
-      >> cat cargo.toml
+!cmd build {
+    [linux]>> echo help
+    [mac]>> echo help
+    [win]>> powershell echo hiaaaa
 }
-
-# !cmd abc
-#       [win]>> ping -n 2 localhost
-#       [win]>> ping -n 2 localhost
-#       [win]>> ping -n 2 localhost
-# }
-
-
-
-# !cmd py [
-#       shell:powershell 
-#       !abc
-# ]{
-#    >> python --version
-# }
-
-
-
-
-
-# comment 2
-# !cmd asdfk {
-#     >> qwer
-#     >> python jib.py
-#     !cmd second {
-#         >> powershell
-#         >> python jib2.py
-#     }
-
-# }
-

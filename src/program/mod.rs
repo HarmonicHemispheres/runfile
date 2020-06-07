@@ -1,2 +1,2 @@
-pub mod cmd;
 pub mod program;
+pub mod config;

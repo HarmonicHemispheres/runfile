@@ -42,6 +42,17 @@ impl<'a> Parser<'a> {
         self.pos += 1;
     }
 
+    fn nextif(&mut self, tok: TokenType) -> Result<(), String>{
+        let mtok = self.curr();
+        if mtok.t == tok {
+            self.next();
+            Ok(())
+        } else {
+            let fmt = format!("expected '{:?}' but got '{:?}'", tok, mtok);
+            Err(fmt)
+        }
+    }
+
     fn curr(&mut self) -> Token {
         self.tokens[self.pos].clone()
     }
@@ -63,24 +74,30 @@ impl<'a> Parser<'a> {
         self.actions = vec![];
         loop {
             let tok = self.curr();
-            match tok.t {
-                TokenType::Command => {
-                    let cmd = self.parse_cmd();
-                    match &cmd {
-                        Ok(_) => {},
-                        Err(msg) => return Err(msg.to_string())
-                    };
-
-                    self.actions.push(cmd.unwrap());
-                },
-                TokenType::Script => {
-                    let script = self.parse_script().unwrap();
-                    self.actions.push(script);
-                },
+            let res = match tok.t {
+                TokenType::Command => self.parse_cmd(),
+                TokenType::OpenAttr => self.parse_script_attrs(),
+                TokenType::Script => self.parse_script(),
+                TokenType::Variable => self.parse_var(),
                 TokenType::EOF => break,
-                _ => self.next()
-            }
-        }
+                _ => {
+                    let n = Action::Null;
+                    self.next();
+                    Ok(n)
+                }
+            };
+
+            match &res {
+                Ok(_) => {
+                    let r_u = res.unwrap();
+                    match r_u {
+                        Action::Null => {},
+                        _ => self.actions.push(r_u)
+                    }
+                },
+                Err(msg) => return Err(msg.to_string())
+            };
+        };
         if self.logger.verbose {
             self.show_actions();
         }
@@ -89,11 +106,147 @@ impl<'a> Parser<'a> {
 
     // ------ PARSING ------
     fn parse_script (&mut self) -> Result<Action, String> {
-        let token = self.curr();
-        let mut action = Action::Script {
-            cmd: token.v.unwrap()
+        let mut vals: Vec<Action> = vec![];
+        loop {
+            self.next();
+            let token = self.curr();
+            match token.t {
+                TokenType::Value => vals.push(
+                    Action::Value{v: token.v.unwrap()}
+                ),
+                TokenType::VarRef => {
+                    self.next();
+                    match self.nextif(TokenType::OpenScope) {
+                        Ok(_) => {},
+                        Err(msg) => return Err(msg)
+                    }
+
+                    let tok = self.curr();
+                    match tok.t {
+                        TokenType::Ident => vals.push(
+                            Action::VarRef{ v:tok.v.unwrap() }
+                        ),
+                        _ => return Err("expected ident in var ref!".to_owned())
+                    }
+                    
+                    self.next();
+                    match self.curr().t {
+                        TokenType::CloseScope => {},
+                        _ => return Err("expected '}' to close token ref".to_owned())
+                    }
+                },
+                _ => break
+            }; 
+        };
+        
+        let action = Action::Script {
+            cmd: vals,
+            attrs: vec![]
+        };
+        Ok(action)
+    }
+
+    fn parse_script_attrs (&mut self) -> Result<Action, String> {
+        let mut vals:  Vec<Action> = vec![];
+        let mut attrs: Vec<String> = vec![];
+
+        loop {
+            let token = self.curr();
+            self.next();
+            let token = self.curr();
+            match token.t {
+                TokenType::CloseAttr => break,
+                TokenType::Ident => attrs.push(token.v.unwrap().to_owned()),
+                TokenType::NewLine | TokenType::Comma => {},
+                _ => break
+            }
         };
         self.next();
+
+        let script_cmd = self.parse_script();
+        match script_cmd.unwrap() {
+            Action::Script{attrs,cmd} => vals.extend(&mut cmd.iter().cloned()),
+            _ => {}
+        }
+        
+        let action = Action::Script {
+            cmd: vals,
+            attrs: attrs
+        };
+        Ok(action)
+    }
+
+    fn parse_var (&mut self) -> Result<Action, String> {
+        let mut ident = String::new();
+        let mut value: Vec<Action> = vec![];
+        
+        self.next();
+        let token = self.curr();
+        match token.t {
+            TokenType::Ident => {
+                ident = token.v.unwrap();
+            },
+            _ => return Err("Expected Identity for variable!".to_owned())
+        };
+
+        // check for equal sign
+        self.next();
+        let token = self.curr();
+        match token.t {
+            TokenType::EqualSign => {},
+            _ => return Err("Expected '=' for variable!".to_owned())
+        };
+        
+        self.next();
+        let token = self.curr();
+        match token.t {
+            TokenType::Value => {
+                value.push(Action::Value{v: token.v.unwrap()});
+            },
+            TokenType::OpenMLineScope => {
+                loop {
+                    self.next();
+                    let token = self.curr();
+                    match token.t {
+                        TokenType::Value => {
+                            value.push(Action::Value{v: token.v.unwrap()});
+                        },
+                        TokenType::VarRef => {
+                            self.next();
+                            match self.nextif(TokenType::OpenScope) {
+                                Ok(_) => {},
+                                Err(msg) => return Err(msg)
+                            }
+        
+                            let tok = self.curr();
+                            match tok.t {
+                                TokenType::Ident => value.push(
+                                    Action::VarRef{ v:tok.v.unwrap() }
+                                ),
+                                _ => return Err("expected ident in var ref!".to_owned())
+                            }
+                            
+                            self.next();
+                            match self.curr().t {
+                                TokenType::CloseScope => {},
+                                _ => return Err("expected '}' to close token ref".to_owned())
+                            }
+                        },
+                        TokenType::NewLine => {
+                            value.push(Action::Value{v: "\n".to_owned()});
+                        },
+                        TokenType::CloseMLineScope => break,
+                        _ => return Err("Excepted value for multiline variable!".to_owned())
+                    }
+                }
+            },
+            _ => return Err("Excepted value for variable!".to_owned())
+        };
+
+        let action = Action::Variable {
+            ident: ident,
+            value: value
+        };
         Ok(action)
     }
 
@@ -138,6 +291,10 @@ impl<'a> Parser<'a> {
                     self.next();
                     found_open = true;
                 },
+                TokenType::OpenAttr if found_open => {
+                    let script = self.parse_script_attrs();
+                    scripts.push(script.unwrap());
+                },
                 TokenType::Script if found_open => {
                     let script = self.parse_script();
                     scripts.push(script.unwrap());
@@ -145,6 +302,9 @@ impl<'a> Parser<'a> {
                 TokenType::CloseScope if found_open => {
                     self.next();
                     break;
+                },
+                TokenType::NewLine => {
+                    self.next();
                 },
                 _ => {
                     let msg = format!("invalid item at: {:?}", tok.t);   

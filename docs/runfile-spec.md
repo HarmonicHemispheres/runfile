@@ -10,7 +10,7 @@ an cli automation focused programming too, inspired from make.
 ```
 
 
-## commands
+## scripts
 ```python
 >> echo hello
 ```
@@ -19,7 +19,7 @@ an cli automation focused programming too, inspired from make.
 ## a command block
 
 ```python
-# this will use new lines following the pattern <whitespace><'>>'>
+# this will use new lines following the pattern <'>>'>
 # to indicate new commands
 !cmd { 
     >> echo hello 
@@ -87,4 +87,43 @@ an cli automation focused programming too, inspired from make.
     (lnx)>>
     (mac)>>
 }
+```
+
+
+## Arguments
+building cli tools is very easy with runfile using the `!arg` keyword.
+
+```rust
+!arg <ident> [<attrs>]
+```
+
+this will allow the user to write out simple variables that will
+automatically get parsed out by runfile and be usable as a value
+inside the runfile scripts. attributes are available to help define
+behavior of arguments.
+
+```python
+!arg debug [
+    optional:<true or false>,   # defaults to true
+    short_flag:<single letter>,
+    long_flag:<word>
+    ]
+```
+
+**example**
+```rust
+!arg debug [type:flag, short_flag:d]
+!arg username [
+    type:store,
+    optional:false, 
+    long_flag:user
+    ]
+!arg password [
+    type:store,
+    optional:false, 
+    long_flag:pass
+    ]
+```
+```shell
+$ run -d --user myusername --pass asdfhjk234 
 ```
