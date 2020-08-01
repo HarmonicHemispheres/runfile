@@ -10,6 +10,7 @@ edition = "2018"
 regex = "1"
 subprocess = "0.1.8"
 clap = "3.0.0-beta.1"
+uuid = { version = "0.8", features = ["v4"] }
 
 
 [profile.dev]

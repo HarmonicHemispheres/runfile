@@ -1,27 +1,19 @@
-# this whole line is a comment
-# comment here?
+# [MAIN]
+# (
+#     req:[file.o, other.o]
+#     parser:standard
+# )
+MSK.SYNC
 
-!var show = echo hello world
-
-# !var ps = {{
-# echo "hi there
-# long string"
-# }}
-
-# supports multi line varaibles
-!var pcmd = {{
-echo c1 &&
-echo c2
-}}
-
-# supports platform specific scripts
-[linux]>> ${pcmd}
-[mac]>> ${pcmd}
-[win]>> powershell ping localhost
-
-
-!cmd build {
-    [linux]>> echo help
-    [mac]>> echo help
-    [win]>> powershell echo hiaaaa
-}
+RUN (
+    win 
+    req mac 
+    file:'3.444' 
+    a:1.234.1
+)
+DOWNLOAD (
+    win 
+    from:'https://googl....' 
+    to:'../'
+) 
+>> python scrip.py --asd -d 234lk

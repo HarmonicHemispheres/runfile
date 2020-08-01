@@ -1,21 +1,38 @@
+// use crate::crypto::digest::Digest;
+// use crypto::sha1::Sha1;
+use uuid::Uuid;
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Attr {
+    value {v: String},
+    commands {v: Vec<Action>}
+}
 
 
-#[derive(Debug, Clone)]
-pub enum Action {
-    Value {v: String },
-    VarRef {v: String },
-    Script {
-        attrs: Vec<String>,
-        cmd: Vec<Action>
-    },
-    Variable {
-        ident: String,
-        value: Vec<Action>
-    },
-    Command {
-        ident: String,
-        attrs: Vec<String>,
-        scripts: Vec<Action>
-    },
-    Null
+#[derive(Debug, Clone, PartialEq)]
+pub struct Action {
+    name: String,
+    hash_id: String,
+    attrs: HashMap<String, Attr>,
+    val: Option<String>
+}
+
+
+
+impl Action {
+    pub fn new(name: String,
+               attrs: HashMap<String, Attr>,
+               val: Option<String>
+              ) -> Action 
+    {
+        // let hash = Sha1::new().result_str();
+        let hash = Uuid::new_v4();
+        Action {
+            name: name,
+            hash_id: hash.to_simple().to_string(),
+            attrs: attrs,
+            val: val
+        }
+    }
 }

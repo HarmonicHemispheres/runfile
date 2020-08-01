@@ -1,17 +1,18 @@
-mod parser;
-mod lexer;
+// mod parser;
 mod utils;
+mod lexer;
+mod parser;
 mod program;
+// mod engine;
 
 use lexer::lexer::Lexer;
 use parser::parser::Parser;
-use utils::logger::Logger;
-use program::program::Program;
+use utils::logger::{Logger, Level};
+// use engine::{EngineSettings, Runner};
 use program::config::Cli;
 use std::fs;
-use std::env;
+// use std::env;
 use clap::Clap;
-
 
 fn main() {
 
@@ -24,13 +25,20 @@ fn main() {
         .expect("Something went wrong reading the file");
     
     //->  Setup logger <-//
-    let logger = Logger::new(None, false, true, cli.debug);
+    let logger = Logger::new(None, false, true, true);
     
     //->  Lex characters into tokens <-//
     let mut lexer = Lexer::new(&logger, contents);
     let _l_analyze = lexer.analyze();
+    match _l_analyze {
+        Ok(_) => {},
+        Err(msg) => {
+            logger.log(msg, Level::Error);
+            return
+        }
+    }
     
-    //->  parse tokens into actions <-//
+    // ->  parse tokens into actions <-//
     let mut parser = Parser::new(&logger, &lexer.token_stack);
     let _p_analyze = parser.analyze();
     match _p_analyze {
@@ -40,8 +48,12 @@ fn main() {
             return;
         }
     }
+
     
     //-> execute program actions <-//
-    let mut prg = Program::new(parser.actions);
-    prg.run(cli);
+    // let cfg = EngineSettings{
+    //     display_commands: true
+    // };
+    // let mut runner = Runner::new(parser.actions, cfg);
+    // runner.run();
 }

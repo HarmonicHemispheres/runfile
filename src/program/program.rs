@@ -90,7 +90,7 @@ impl Program {
         let args: Vec<&str> = cmd_str.split(" ").collect();
         let msg: String = format!(">> {}", cmd_str);
 
-        // check for plaform specific flags
+        // check for platform specific flags
         let mut should_run = false;
         if (attrs_dict.contains_key("mac") && cfg!(target_os="macos") )|| 
             (attrs_dict.contains_key("win") && cfg!(target_os="windows")) ||
@@ -181,3 +181,4 @@ impl Program {
         }
     }
 }
+

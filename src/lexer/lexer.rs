@@ -10,6 +10,7 @@ use crate::utils::logger::{Level, Logger};
 pub struct Lexer<'a>  {
     pos: usize,
     line: usize,
+    col: usize,
     content: String,
     pub token_stack: Vec<Token>,
     logger: &'a Logger, 
@@ -20,10 +21,68 @@ impl<'a> Lexer<'a>  {
     pub fn new(logger: &'a Logger, content: String) -> Lexer {
         Lexer {
             pos: 0,
-            line: 0,
+            line: 1,
+            col: 1,
             content: content,
             token_stack: Vec::new(),
             logger: logger, 
+        }
+    }
+
+    fn current(&self) -> Option<char> {
+        self.content.chars().nth(self.pos)
+    }
+
+    // 'advance' N chars in the file string 'position'
+    fn adv(&mut self, chars: usize) -> bool {
+        for _ in 0..chars {
+            // get the current character
+            let c = self.current().unwrap(); 
+            self.pos += 1;
+
+            // check if line and/or need to advance
+            match c {
+                '\n' | '\r' => { self.line += 1; self.col = 1; },
+                _ => { self.col += 1; }
+            }
+
+            // if at end of file string, return
+            if self.at_end() {
+                return true
+            }
+        }
+        false
+    }
+
+    fn rev(&mut self, chars: usize){
+        for _ in 0..chars {
+            let c = self.current().unwrap(); 
+            self.pos -= 1;
+            match c {
+                '\n' | '\r' => { 
+                    //
+                    // find line length of previous line 
+                    //
+                    self.line -= 1; 
+                    let mut line_length = 0;
+                    loop {
+                        let c = self.current().unwrap(); 
+                        match c {
+                            '\n' => break,
+                            _ if self.pos == 0 => {
+                                line_length += 1;
+                                break
+                            },
+                            _ => { line_length += 1; }
+                        }
+                        self.pos -= 1;
+                    }
+                    self.pos += line_length;
+                    self.col = line_length; 
+                },
+                _ if self.pos == 0 => break,
+                _ => { self.col -= 1; }
+            }
         }
     }
 
@@ -35,36 +94,6 @@ impl<'a> Lexer<'a>  {
         }
     }
 
-    fn adv(&mut self, chars: usize, lines: usize) {
-        self.pos += chars;
-        self.line += lines;
-        // println!("....|  len:{}  i:{}", self.content.len()-1, self.pos);
-    }
-
-    fn reset(&mut self) {
-        self.pos = 0;
-        self.line = 0;
-        self.token_stack = vec![];
-    }
-
-    fn current(&self) -> Option<char> {
-        // println!("cur is (p:{}) '{}'  len:{}", 
-        //         self.pos, 
-        //         self.content.chars().nth(self.pos).unwrap(),
-        //         self.content.len()
-        //     );
-        self.content.chars().nth(self.pos)
-    }
-
-    fn adv_past_spaces(&mut self) {
-        loop {
-            match self.current().unwrap() {
-                ' ' => self.adv(1, 0),
-                _ => break
-            };
-        };
-    }
-
     fn has_pat(&self, pat: &str) -> bool {
         if self.content[self.pos..].starts_with(pat) {
             true
@@ -73,10 +102,18 @@ impl<'a> Lexer<'a>  {
         }
     }
 
-    fn add(&mut self, t: TokenType, v: Option<String>){
+    fn add(&mut self, 
+           t: TokenType, 
+           v: Option<String>,
+           line: usize, 
+           col: usize){
         self.token_stack.push(
-            Token{t: t, v: v}
-        ); 
+            Token{t: t, 
+                  v: v, 
+                  col: col,
+                  ln: line
+                 }
+        );
     }
 
     pub fn show_tokens(&mut self) {
@@ -93,67 +130,96 @@ impl<'a> Lexer<'a>  {
                 Level::Info
             );
         }
-        self.reset();
+
         loop {
             let c = self.current().unwrap();
+
             match c {
                 '#' => self.parse_comment(),
-                '!' => {
-                    if self.has_pat("!cmd") {
-                        self.adv(4, 0);
-                        self.parse_cmd();
-                    } else if self.has_pat("!var") {
-                        self.adv(4, 0);
-                        self.parse_var();
-                    } else {
-                        self.adv(1, 0);
-                    }
+                '>' if self.has_pat(">>")  => {
+                    self.add(TokenType::RunSym, None, self.line, self.col);
+                    self.adv(2);
+                    self.parse_value(vec!['\n', '$']);
                 },
-                '>'  => {
-                    self.parse_script();
-                },
-                '"' | '\'' => {
-                    self.adv(1, 0);
-                    self.parse_string(c);
+                '=' => {
+                    self.add(TokenType::EqualSign, None, self.line, self.col);
+                    self.adv(1);
                 },
                 '[' => {
-                    self.add(TokenType::OpenAttr, None);
-                    self.adv(1, 0);
+                    if self.has_pat("[[") {
+                        self.adv(2);
+                        self.parse_raw_value("]]");
+                    } else {
+                        self.add(TokenType::OpenAttr, None, self.line, self.col);
+                        self.adv(1);
+                    }
                 },
                 ']' => {
-                    self.add(TokenType::CloseAttr, None);
-                    self.adv(1, 0);
+                    self.add(TokenType::CloseAttr, None, self.line, self.col);
+                    self.adv(1);
+                },
+                '(' => {
+                    self.add(TokenType::OpenParen, None, self.line, self.col);
+                    self.adv(1);
+                },
+                ')' => {
+                    self.add(TokenType::CloseParen, None, self.line, self.col);
+                    self.adv(1);
+                },
+                '$' => {
+                    self.add(TokenType::DollarSign, None, self.line, self.col);
+                    self.adv(1);
                 },
                 '{' => {
-                    self.add(TokenType::OpenScope, None);
-                    self.adv(1, 0);
+                    self.add(TokenType::OpenScope, None, self.line, self.col);
+                    self.adv(1);
                 },
                 '}' => {
-                    self.add(TokenType::CloseScope, None);
-                    self.adv(1, 0);
+                    self.add(TokenType::CloseScope, None, self.line, self.col);
+                    self.adv(1);
                 },
                 ':' => {
-                    self.add(TokenType::Colon, None);
-                    self.adv(1, 0);
+                    self.add(TokenType::Colon, None, self.line, self.col);
+                    self.adv(1);
                 },
-                ' ' => self.adv(1, 0),
+                ';' => {
+                    self.add(TokenType::SemiColon, None, self.line, self.col);
+                    self.adv(1);
+                },
+                ' ' => {
+                    self.parse_space();
+                },
                 ',' => {
-                    self.add(TokenType::Comma, None);
-                    self.adv(1, 0);
+                    self.add(TokenType::Comma, None, self.line, self.col);
+                    self.adv(1);
                 },
-                _ if c.is_alphabetic() => self.parse_ident(),
+                '.' => {
+                    self.add(TokenType::Period, None, self.line, self.col);
+                    self.adv(1);
+                },
+                '"' | '\'' => self.parse_string(),
                 '\n' | '\r' => {
-                    self.add(TokenType::NewLine, None);
-                    self.adv(1, 1);
+                    self.add(TokenType::NewLine, None, self.line, self.col);
+                    self.adv(1);
                 },
-                _ => {
-
-                    let e_msg = format!("ERROR: invalid character '{}' @ l:{}, p:{}", c, self.line+1, self.pos+1);
+                _ if c.is_alphabetic() => {
+                    if !self.parse_keyword() {
+                        if !self.parse_ident() {
+                            self.parse_value(vec![' ', '\n']);
+                        }
+                    }
+                },
+                _ if c.is_numeric() => {
+                    self.parse_int();
+                },
+                _ if !c.is_ascii() => {
+                    let e_msg = format!("ERROR: invalid character '{}' @ line:{}, col:{}", c, self.line, self.col);
                     return Err(e_msg);
-                }
+                },
+                _ => self.parse_value(vec![' ', '\n', '}']),
             };
             if self.at_end() {
-                self.add(TokenType::EOF, None);
+                self.add(TokenType::EOF, None, self.line, self.col);
                 break; 
             }
         };
@@ -163,224 +229,196 @@ impl<'a> Lexer<'a>  {
         }
         Ok("SUCCESS: string has proper format")
     }
+    
+    fn parse_keyword(&mut self) -> bool {
 
-    fn parse_value(&mut self, terminator: Option<char>) {
+        // parse for normal action formats
+        
+        // if self.has_pat("run ") || self.has_pat("RUN "){
+        //     self.add(TokenType::Keyword, Some("run".to_owned()), self.line, self.col);
+        //     self.adv(3);
+        // }
+        // else if self.has_pat("var ") || self.has_pat("VAR ") {
+        //     self.add(TokenType::Keyword, Some("var".to_owned()), self.line, self.col);
+        //     self.adv(3);
+        // }
+        // else if self.has_pat("cmd ") || self.has_pat("CMD ") {
+        //     self.add(TokenType::Keyword, Some("cmd".to_owned()), self.line, self.col);
+        //     self.adv(3);
+        // }
+        
+        // parse for special format edition
+        // else if self.has_pat("run! ") || self.has_pat("RUN! "){
+        //     self.add(TokenType::Keyword, Some("run!".to_owned()), self.line, self.col);
+        //     self.adv(4);
+        // }
+        // else if self.has_pat("var! ") || self.has_pat("VAR! ") {
+        //     self.add(TokenType::Keyword, Some("var!".to_owned()), self.line, self.col);
+        //     self.adv(3);
+        // } 
+        // else {
+        //    return false
+        // }
+        false
+    }
+
+    fn parse_string(&mut self) {
         let mut val = String::new();
+        let marker: char = self.current().unwrap();
+        let curr_line = self.line;
+        let curr_col = self.col;
+        self.adv(1);
         loop {
             let c = self.current().unwrap();
-            match terminator {
-                Some(ch) if ch == c => {
-                    self.adv(1,0);
-                    break;
-                },
-                Some(_) | None => {}
-            }
             match c {
-                '\n' | '\r' => {
-                    self.adv(1, 1);
-                    let b = self.current().unwrap();
-                    self.add(TokenType::Value, Some(val)); 
-                    self.add(TokenType::NewLine, None); 
-                    break;
-                },
-                '$' if self.has_pat("${") => {
-                    self.add(TokenType::Value, Some(val)); 
-                    self.parse_var_ref();
-                    self.parse_value(None);
+                _ if c == marker => {
+                    self.adv(1);
                     break
                 },
                 _ => {
                     val.push(c);
-                    self.adv(1, 0);
+                    self.adv(1);
                 }
-            };
-            if self.at_end() {
-                break
             }
-        };
-    }
-
-    fn parse_mline_value(&mut self){
-        self.add(TokenType::OpenMLineScope, None);
-        self.adv(2, 0);
-        loop {
-            let c = self.current().unwrap();
-            match c {
-                '}' if self.has_pat("}}") => {
-                    self.token_stack.pop();
-                    self.add(TokenType::CloseMLineScope, None);
-                    self.adv(2, 0);
-                    break
-                },
-                '\n' | '\r' => self.adv(1, 1),
-                _ if self.at_end() => {
-                    self.adv(1, 1);
-                    break
-                },
-                _ => self.parse_value(None)
-            }
-            if self.at_end() {
-                break
-            }
+            if self.at_end() { break; }
         }
+        self.add(TokenType::StringValue, Some(val), curr_line, curr_col);
     }
 
-    fn parse_string(&mut self, quote_char: char) {
+    fn parse_int(&mut self) {
         let mut val = String::new();
+        let curr_line = self.line;
+        let curr_col = self.col;
+        // self.adv(1);
         loop {
             let c = self.current().unwrap();
             match c {
-                _ if c == quote_char => {
-                    self.adv(1, 0);
-                    break;
-                },
-                '\n' | '\r' => {
+                _ if c.is_numeric() => {
+                    self.adv(1);
                     val.push(c);
-                    self.adv(1, 1);
-                },
-                _ => {
-                    val.push(c);
-                    self.adv(1, 0);
-                }
-            };
-            if self.at_end() {
-                break
-            }
-        };
-        self.add(TokenType::StringValue, Some(val)); 
-    }
-
-    fn parse_var_ref(&mut self){
-        if !self.has_pat("${") {
-            return
-        }
-        self.adv(2, 0);
-        self.add(TokenType::VarRef, None);
-        self.add(TokenType::OpenScope, None);
-        loop {
-            let c = self.current().unwrap();
-            match c {
-                c if c.is_alphanumeric() => {
-                    self.parse_ident();  
-                },
-                ' ' => self.adv_past_spaces(),
-                '}' => {
-                    self.add(TokenType::CloseScope, None);
-                    self.adv(1, 0);
-                    break;
                 },
                 _ => break
-            };
-            if self.at_end() {
-                break
             }
-        };
-    }
-
-    fn parse_script(&mut self){
-        self.adv_past_spaces();
-        if !self.has_pat(">> ") {
-            self.adv(1, 0);
-            return
+            if self.at_end() { break; }
         }
-        self.adv(3, 0);
-        self.add(TokenType::Script, None);
+        self.add(TokenType::IntValue, Some(val), curr_line, curr_col); 
+    }
+
+    fn parse_space(&mut self) {
+        let curr_line = self.line;
+        let curr_col = self.col;
+        let mut found_space = false;
         loop {
             let c = self.current().unwrap();
             match c {
-                '\\' if self.has_pat("\\\r\n") || self.has_pat("\\\n") => {
-                    self.adv(2, 1);
-                    self.adv_past_spaces();
+                ' ' => {
+                    self.adv(1);
+                    found_space = true;
                 },
-                '$' => {
-                    self.parse_var_ref();
-                },
-                '\n' | '\r' => {
-                    self.adv(1, 1);
-                    break;
-                },
-                _ => {
-                    self.parse_value( None );
-                    break;
-                }
-            };
-            if self.at_end() {
-                break
+                _ => break
             }
-        };
+            if self.at_end() { break; }
+        }
+        if found_space {
+            self.add(TokenType::Space, None, curr_line, curr_col);
+        }
     }
 
-    fn parse_ident(&mut self) {
+    fn parse_ident(&mut self) -> bool {
+        let mut is_ident = true;
         let mut val = String::new();
-        self.adv_past_spaces();
+        let mut adv_counter = 0;
+        let curr_line = self.line;
+        let curr_col = self.col;
         loop {
             let c = self.current().unwrap();
             match c {
-                '_' | '-' => {
-                    self.adv(1, 0);
+                '_' | '-' | '.' => {
+                    self.adv(1);
+                    adv_counter += 1;
                     val.push(c);
                 },
-                c if c.is_alphanumeric() => {
-                    self.adv(1, 0);
+                _ if c.is_alphanumeric() => {
+                    self.adv(1);
+                    adv_counter += 1;
                     val.push(c);
                 },
+                ' ' | ':' | ';' | '{' | '(' | '[' | '\n' | ',' | '}' | ')' | ']' => break,
                 _ => {
-                    break;
+                    is_ident = false;
+                    break
                 }
-            };
-            if self.at_end() {
-                break
             }
-        };
-        self.add(TokenType::Ident, Some(val));
+            if self.at_end() { break; }
+        }
+        if is_ident {
+            self.add(TokenType::Ident, Some(val), curr_line, curr_col);
+            return true
+        } else {
+            self.rev(adv_counter);
+            false
+        }
+           
     }
 
-    fn parse_var(&mut self) {
-        self.adv_past_spaces();
-        self.add(TokenType::Variable, None);
-        self.parse_ident();
+    fn parse_value(&mut self, delims: Vec<char>) {
+        let mut val = String::new();
+        self.parse_space();
+        let curr_line = self.line;
+        let curr_col = self.col;
         loop {
             let c = self.current().unwrap();
             match c {
-                '=' => {
-                    self.add(TokenType::EqualSign, None);
-                    self.adv(1, 0);
-                },
-                '{' if self.has_pat("{{") => {
-                    self.parse_mline_value();
-                    break;
-                },
-                ' ' => self.adv(1, 0),
-                c if c.is_ascii() => {
-                    self.parse_value(None);
-                    break;
-                },
-                _ => {}
-            };
-            if self.at_end() {
-                break
+                _ if delims.contains(&c) => break,
+                _ => {
+                    self.adv(1);
+                    val.push(c);
+                }
             }
-        }; 
+            if self.at_end() { break; }
+        }
+        self.add(TokenType::Value, Some(val), curr_line, curr_col);
     }
 
-    fn parse_comment(&mut self) {
+    fn parse_raw_value(&mut self, delim: &str) {
+        let mut val = String::new();
+        let curr_line = self.line;
+        let curr_col = self.col;
         loop {
             let c = self.current().unwrap();
             match c {
-                '\n' | '\r' => {
-                    self.adv(1, 1); 
+                _ if self.has_pat(delim) => {
+                    self.adv(delim.len());
                     break
                 },
-                _ => self.adv(1, 0)
-            };
-            if self.at_end() {
-                break
+                _ => {
+                    self.adv(1);
+                    val.push(c);
+                }
             }
+            if self.at_end() { break; }
         }
+        self.add(TokenType::Value, Some(val), curr_line, curr_col);
     }
-
-    fn parse_cmd(&mut self){
-        self.add(TokenType::Command, None);
-        self.parse_ident();        
+    
+    fn parse_comment(&mut self) {
+        let mut val = String::new();
+        let curr_line = self.line;
+        let curr_col = self.col;
+        loop {
+            let c = self.current().unwrap();
+            match c {
+                '\n' | '\r' => {
+                    self.adv(1); 
+                    break
+                },
+                _ => {
+                    val.push(c);
+                    self.adv(1);
+                }
+            };
+            if self.at_end() { break }
+        }
+        self.add(TokenType::Comment, Some(val), curr_line, curr_col);
     }
 }

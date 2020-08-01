@@ -1,23 +1,9 @@
-use super::actions::Action;
+use super::actions::{Action, Attr};
 use crate::lexer::tokens::{Token, TokenType};
 use crate::utils::logger::{Level, Logger};
-// use crate::utils::cmd::{Cmd, Setting};
+use std::collections::{HashMap, HashSet};
 
-#[allow(dead_code)]
-pub fn parse(s: &String) -> Vec<Vec<&str>> {
-    let mut output: Vec<Vec<&str>> = vec![];
-    for line in s.lines() {
-        match line {
-            ln if ln.starts_with(">>") => {
-                let args: Vec<&str> = ln.split(" ").collect();
-                let polished_args = args[1..].to_owned();
-                output.push(polished_args);
-            },
-            _ => {}
-        };
-    };
-    output
-}
+// use crate::utils::cmd::{Cmd, Setting};
     
 
 pub struct Parser<'a> {
@@ -38,23 +24,43 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /*
+    --------- --------- UTILS --------- ---------
+    */
     fn next(&mut self) {
         self.pos += 1;
     }
 
-    fn nextif(&mut self, tok: TokenType) -> Result<(), String>{
-        let mtok = self.curr();
-        if mtok.t == tok {
-            self.next();
-            Ok(())
-        } else {
-            let fmt = format!("expected '{:?}' but got '{:?}'", tok, mtok);
-            Err(fmt)
+    fn has_next(&mut self, pat: Vec<TokenType>) -> bool {
+        for i in 0..pat.len() {
+            if self.pos + i >= self.tokens.len() {
+                return false;
+            }
+            let temp_tok = self.get_tok(self.pos + i);
+            match temp_tok {
+                Ok(tok) if tok.t == pat[i] => {
+                    // println!("[{}] {} == {} = {}",i+self.pos, tok.t, pat[i], (tok.t == pat[i]));
+                },
+                Ok(tok) => {
+                    // println!("[{}] {} == {} = {}",i+self.pos, tok.t, pat[i], (tok.t == pat[i]));
+                    return false
+                },
+                Err(msg) => return false
+            }
         }
+        true
     }
 
     fn curr(&mut self) -> Token {
         self.tokens[self.pos].clone()
+    }
+
+    fn get_tok(&mut self, pos: usize) -> Result<Token, String> {
+        if pos < self.tokens.len() {
+            Ok(self.tokens[pos].clone())
+        } else {
+            Err("pos requested is longer than token list".to_owned())
+        }
     }
 
     pub fn show_actions(&self) {
@@ -74,27 +80,17 @@ impl<'a> Parser<'a> {
         self.actions = vec![];
         loop {
             let tok = self.curr();
-            let res = match tok.t {
-                TokenType::Command => self.parse_cmd(),
-                TokenType::OpenAttr => self.parse_script_attrs(),
-                TokenType::Script => self.parse_script(),
-                TokenType::Variable => self.parse_var(),
+            let res: Result<Action, String> = match tok.t {
+                TokenType::Ident => self.parse_kw_generic(),
                 TokenType::EOF => break,
                 _ => {
-                    let n = Action::Null;
                     self.next();
-                    Ok(n)
+                    continue
                 }
             };
 
             match &res {
-                Ok(_) => {
-                    let r_u = res.unwrap();
-                    match r_u {
-                        Action::Null => {},
-                        _ => self.actions.push(r_u)
-                    }
-                },
+                Ok(_) => self.actions.push(res.unwrap()),
                 Err(msg) => return Err(msg.to_string())
             };
         };
@@ -104,220 +100,222 @@ impl<'a> Parser<'a> {
         Ok("success parsing")
     }
 
-    // ------ PARSING ------
-    fn parse_script (&mut self) -> Result<Action, String> {
-        let mut vals: Vec<Action> = vec![];
-        loop {
-            self.next();
-            let token = self.curr();
-            match token.t {
-                TokenType::Value => vals.push(
-                    Action::Value{v: token.v.unwrap()}
-                ),
-                TokenType::VarRef => {
-                    self.next();
-                    match self.nextif(TokenType::OpenScope) {
-                        Ok(_) => {},
-                        Err(msg) => return Err(msg)
-                    }
-
-                    let tok = self.curr();
-                    match tok.t {
-                        TokenType::Ident => vals.push(
-                            Action::VarRef{ v:tok.v.unwrap() }
-                        ),
-                        _ => return Err("expected ident in var ref!".to_owned())
-                    }
-                    
-                    self.next();
-                    match self.curr().t {
-                        TokenType::CloseScope => {},
-                        _ => return Err("expected '}' to close token ref".to_owned())
-                    }
-                },
-                _ => break
-            }; 
-        };
-        
-        let action = Action::Script {
-            cmd: vals,
-            attrs: vec![]
-        };
-        Ok(action)
-    }
-
-    fn parse_script_attrs (&mut self) -> Result<Action, String> {
-        let mut vals:  Vec<Action> = vec![];
-        let mut attrs: Vec<String> = vec![];
-
-        loop {
-            let token = self.curr();
-            self.next();
-            let token = self.curr();
-            match token.t {
-                TokenType::CloseAttr => break,
-                TokenType::Ident => attrs.push(token.v.unwrap().to_owned()),
-                TokenType::NewLine | TokenType::Comma => {},
-                _ => break
-            }
-        };
-        self.next();
-
-        let script_cmd = self.parse_script();
-        match script_cmd.unwrap() {
-            Action::Script{attrs,cmd} => vals.extend(&mut cmd.iter().cloned()),
-            _ => {}
-        }
-        
-        let action = Action::Script {
-            cmd: vals,
-            attrs: attrs
-        };
-        Ok(action)
-    }
-
-    fn parse_var (&mut self) -> Result<Action, String> {
-        let mut ident = String::new();
-        let mut value: Vec<Action> = vec![];
-        
-        self.next();
-        let token = self.curr();
-        match token.t {
-            TokenType::Ident => {
-                ident = token.v.unwrap();
-            },
-            _ => return Err("Expected Identity for variable!".to_owned())
-        };
-
-        // check for equal sign
-        self.next();
-        let token = self.curr();
-        match token.t {
-            TokenType::EqualSign => {},
-            _ => return Err("Expected '=' for variable!".to_owned())
-        };
-        
-        self.next();
-        let token = self.curr();
-        match token.t {
-            TokenType::Value => {
-                value.push(Action::Value{v: token.v.unwrap()});
-            },
-            TokenType::OpenMLineScope => {
-                loop {
-                    self.next();
-                    let token = self.curr();
-                    match token.t {
-                        TokenType::Value => {
-                            value.push(Action::Value{v: token.v.unwrap()});
-                        },
-                        TokenType::VarRef => {
-                            self.next();
-                            match self.nextif(TokenType::OpenScope) {
-                                Ok(_) => {},
-                                Err(msg) => return Err(msg)
-                            }
-        
-                            let tok = self.curr();
-                            match tok.t {
-                                TokenType::Ident => value.push(
-                                    Action::VarRef{ v:tok.v.unwrap() }
-                                ),
-                                _ => return Err("expected ident in var ref!".to_owned())
-                            }
-                            
-                            self.next();
-                            match self.curr().t {
-                                TokenType::CloseScope => {},
-                                _ => return Err("expected '}' to close token ref".to_owned())
-                            }
-                        },
-                        TokenType::NewLine => {
-                            value.push(Action::Value{v: "\n".to_owned()});
-                        },
-                        TokenType::CloseMLineScope => break,
-                        _ => return Err("Excepted value for multiline variable!".to_owned())
-                    }
+    /*
+    --------- --------- PARSING --------- ---------
+    */
+    fn parse_keyword(&mut self) -> Result<Action, String> {
+        let tok = self.curr();
+        match tok.v {
+            Some(s) => {
+                if !s.contains("!") {
+                    return self.parse_kw_generic()
+                }
+                else {
+                    let err_msg = format!("keyword '{}' is not a valid runfile action", s);
+                    Err(err_msg) 
                 }
             },
-            _ => return Err("Excepted value for variable!".to_owned())
-        };
-
-        let action = Action::Variable {
-            ident: ident,
-            value: value
-        };
-        Ok(action)
+            _ => {
+                self.next();
+                Err("expected keyword".to_owned())
+            }
+        }
     }
 
-    fn parse_cmd (&mut self) -> Result<Action, String>{
-        let mut ident = String::from("");
-        let mut attrs: Vec<String> = vec![];
-        let mut scripts: Vec<Action> = vec![];
+    fn parse_attrs(&mut self) -> Result<HashMap<String, Attr>, String> {
+        let mut attrs: HashMap<String, Attr> = HashMap::new();
 
-        // check for ident
-        self.next();
-        let mut tok = self.curr();
-        match tok.t {
-            TokenType::Ident => {
-                ident.push_str(&tok.v.unwrap()[..]);
-                self.next();
-            },
-            _ => {}
-        }
-
-        // check for attributes
-        // let mut found_attrs = 0;
-        // loop {
-        //     tok = self.curr();
-        //     match tok.t {
-        //         TokenType::OpenAttr => found_attrs += 1,
-        //         TokenType::Ident => {},
-        //         TokenType::CloseAttr => {
-        //             found_attrs += 1;
-        //             break;
-        //         },
-        //         _ => {}
-        //     }
-        //     self.next();
-        // }
-
-        // check for scripts
-        let mut found_open = false;
+        // --- parse intro
         loop {
-            tok = self.curr();
-            match tok.t {
-                TokenType::OpenScope => {
+            let token = self.curr();
+            match token.t {
+                TokenType::OpenParen => {
                     self.next();
-                    found_open = true;
+                    break
                 },
-                TokenType::OpenAttr if found_open => {
-                    let script = self.parse_script_attrs();
-                    scripts.push(script.unwrap());
-                },
-                TokenType::Script if found_open => {
-                    let script = self.parse_script();
-                    scripts.push(script.unwrap());
-                },
-                TokenType::CloseScope if found_open => {
+                TokenType::Space | TokenType::NewLine => self.next(),
+                _ => {
+                    let err_msg = format!("1. invalid attributes definition @ {}:{} ", token.ln, token.col);
+                    return Err(err_msg);
+                }
+            }
+        }
+        // --- parse body
+        loop {
+            let token = self.curr();
+            match token.t {
+                TokenType::CloseParen => {
                     self.next();
-                    break;
+                    break
                 },
-                TokenType::NewLine => {
+                TokenType::Space | TokenType::NewLine => self.next(),
+                TokenType::Ident if self.has_next(vec![TokenType::Ident, TokenType::Space]) 
+                                 || self.has_next(vec![TokenType::Ident, TokenType::CloseParen]) => {
+                    attrs.insert(token.v.unwrap(), Attr::value{v:"1".to_owned()});
                     self.next();
+                },
+                TokenType::Ident 
+                    if self.has_next(vec![TokenType::Ident, 
+                                            TokenType::Colon,
+                                            TokenType::Ident
+                                            ]) 
+                        || self.has_next(vec![TokenType::Ident, 
+                                            TokenType::Colon,
+                                            TokenType::StringValue
+                                            ]) => {
+                                            let a_key = token.v.unwrap();
+                                            self.next();
+                                            self.next();
+                                            let token = self.curr();
+                                            attrs.insert(a_key, Attr::value{v:token.v.unwrap()});
+                                            self.next();
+                },
+                TokenType::Ident 
+                    if self.has_next(vec![TokenType::Ident, 
+                                          TokenType::Colon,
+                                          TokenType::IntValue
+                    ]) => {
+                        let mut int_as_str = String::new();
+                        self.next();
+                        self.next();
+                        loop {
+                            let token = self.curr();
+                            match token.t {
+                                TokenType::CloseParen => break,
+                                TokenType::Space | TokenType::NewLine => {
+                                    self.next();
+                                    break
+                                },
+                                TokenType::IntValue  => {
+                                    int_as_str.push_str(&token.v.unwrap().to_owned());
+                                    self.next();
+                                },
+                                TokenType::Period => {
+                                    int_as_str.push('.');
+                                    self.next();
+                                },
+                                _ => {
+                                    let err_msg = format!("2.1. invalid attributes definition @ {}:{} ", token.ln, token.col);
+                                    return Err(err_msg);
+                                }
+                            }
+                        }
+                        let a_key = token.v.unwrap();
+                        attrs.insert(a_key, Attr::value{v:int_as_str});
                 },
                 _ => {
-                    let msg = format!("invalid item at: {:?}", tok.t);   
-                    return Err(msg)
+                    let err_msg = format!("2. invalid attributes definition @ {}:{} ", token.ln, token.col);
+                    return Err(err_msg);
                 }
             }
         }
+        Ok(attrs)
+    }
 
-        let action = Action::Command{
-            ident: ident,
-            attrs: attrs,
-            scripts: scripts
-        };
+    fn parse_in_value(&mut self) -> Result<String, String> {
+        let mut in_value: String = String::new();
+        self.next();
+        loop {
+            let token = self.curr();
+            match token.t {
+                TokenType::NewLine => { 
+                    self.next();
+                    break
+                },
+                TokenType::EOF => break,
+                TokenType::Space => self.next(),
+                TokenType::Value => {
+                    in_value.push_str(&token.v.unwrap());
+                    self.next();
+                }
+                _ => {
+                    let err_msg = format!("invalid input value definition @ {}:{} ", token.ln, token.col);
+                    return Err(err_msg);
+                }
+            }
+        }
+        Ok(in_value)
+    }
+
+    fn parse_kw_generic(&mut self) -> Result<Action, String> {
+        let token = self.curr();
+        let action_name = token.v.unwrap();
+        // let mut flags: HashSet<String> = HashSet::new();
+        let mut attrs: HashMap<String, Attr> = HashMap::new();
+        let mut in_val: String = String::new();
+        self.next();
+        loop {
+            let token = self.curr();
+            match token.t {
+                TokenType::EOF | TokenType::Ident => break,
+                TokenType::Space | TokenType::Comment | TokenType::NewLine => self.next(),
+                TokenType::RunSym => {
+                    let value = self.parse_in_value();
+                    match value {
+                        Ok(value) => {
+                            in_val = value;
+                        },
+                        Err(msg) => {
+                            return Err(msg) 
+                        }
+                    }
+                },
+                //     self.next();
+                //     loop {
+                //         let token = self.curr();
+                //         match token.t {
+                //             TokenType::NewLine => {
+                //                 self.next();
+                //                 break
+                //             },
+                //             TokenType::Value => {
+                //                 run_vals.push(RunVal::Value{v:token.v.unwrap()});
+                //                 self.next()
+                //             },
+                //             TokenType::DollarSign if self.has_next(vec![
+                //                 TokenType::DollarSign,
+                //                 TokenType::OpenScope,
+                //                 TokenType::Value
+                //             ]) => {
+                //                 self.next();
+                //                 self.next();
+                //                 let token = self.curr();
+                //                 run_vals.push(RunVal::Expr{v:token.v.unwrap()});
+                                
+                //                 self.next();
+                //                 if !self.has_next(vec![TokenType::CloseScope]){
+                //                     return Err("reference expression is not closed with '}'!".to_owned())
+                //                 } else {
+                //                     self.next();
+                //                 }
+                //             },
+                //             _ => {
+                //                 let msg = format!("invalid token, '{}' in RUN command!", token.t);
+                //                 return Err(msg)
+                //             }
+                //         }
+                //     }
+                //     break
+                // },
+                TokenType::OpenParen => {
+                    let attrs_parsed = self.parse_attrs();
+                    match attrs_parsed {
+                        Ok(a) => {
+                            attrs = a;
+                        },
+                        Err(msg) => {
+                            return Err(msg) 
+                        }
+                    }
+                },
+                _ => {
+                    let err_msg = format!("token '{}' is not a valid runfile action", token.t);
+                    return Err(err_msg)
+                }
+            }
+        }
+        // let action = Action::new(action_name, Some(flags), attrs, Some(run_vals));
+        let action = Action::new(action_name, attrs, Some(in_val));
         Ok(action)
     }
 }
